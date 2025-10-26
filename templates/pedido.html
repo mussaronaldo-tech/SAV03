@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Crear pedido</h1>
+{% if created_id %}<p class="ok">Pedido creado. ID: <b>{{ created_id }}</b></p>{% endif %}
+<form method="post">
+  <input name="service" placeholder="Service ID (p. ej., 27243)" required>
+  <input name="link" placeholder="https://instagram.com/usuario" required>
+  <input name="quantity" type="number" min="1" placeholder="Cantidad" required>
+  <button type="submit">Enviar</button>
+</form>
+{% endblock %}
