@@ -80,7 +80,7 @@ def services():
         return _page("<h2>Servicios (primeros 100)</h2><ul>"+items+"</ul>")
     except Exception as e:
         return _page(f"<p style='color:red'>Error: {e}</p>")
-        # --- Estado de pedido y balance (añadir a app.py) ---
+# --- Estado de pedido y balance (añadir a app.py) ---
 import os, requests
 from flask import request
 
