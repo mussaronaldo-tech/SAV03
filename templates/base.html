@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAV03</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <nav>
+      <a href="{{ url_for('index') }}">Pedido</a>
+      <a href="{{ url_for('services') }}">Servicios</a>
+      <a href="{{ url_for('status') }}">Estado</a>
+      <a href="{{ url_for('balance') }}">Saldo</a>
+      <a href="{{ url_for('admin') }}">Admin</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">© SAV03</footer>
+</body>
+</html>
