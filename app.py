@@ -1,225 +1,121 @@
-# app.py
 import os
-import re
 import requests
-from flask import Flask, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session
 
-# ------------------ Config ------------------
-API_URL = "https://peakerr.com/api/v2"
-API_KEY = os.environ.get("PEAKERR_API_KEY", "").strip()
-
+# --- Configuración básica
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET", "cambia-esto-por-un-secreto-largo")
+app.secret_key = os.environ.get("SECRET_KEY", "cambia-esta-clave")
 
-# ------------------ Helpers ------------------
-def _page(title: str, body_html: str, flash_html: str = "") -> str:
-    nav = (
-        '<p style="margin:12px 0">'
-        '<a href="/">Pedido</a> · '
-        '<a href="/services">Servicios</a> · '
-        '<a href="/status">Estado</a> · '
-        '<a href="/balance">Saldo</a> · '
-        '<a href="/admin">Admin</a>'
-        "</p>"
-    )
-    return f"""
-    <!doctype html>
-    <meta charset="utf-8">
-    <title>{title} · SAV03</title>
-    <style>
-      body {{ font-family: -apple-system, system-ui, Segoe UI, Roboto, Arial, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 12px; }}
-      input, button {{ width: 100%; padding: 10px 12px; margin: 8px 0; border-radius: 12px; border: 1px solid #ddd; }}
-      button {{ background: #eee; cursor: pointer; }}
-      table {{ width: 100%; border-collapse: collapse; }}
-      th, td {{ border-bottom: 1px solid #eee; padding: 8px; text-align: left; font-size: 14px; }}
-      .ok {{ color: #0a7d32; }}
-      .err {{ color: #c40000; }}
-      small.mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }}
-    </style>
-    <h1>{title}</h1>
-    {nav}
-    {flash_html}
-    {body_html}
-    <p><small>© SAV03</small></p>
-    """
+API_URL = "https://peakerr.com/api/v2"
+API_KEY = os.environ.get("PEAKERR_API_KEY", "")
 
-def looks_like_url(x: str) -> bool:
-    return bool(re.match(r"^https?://", (x or "").strip(), re.I))
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
 
-def api_post(payload: dict):
-    """POST a Peakerr con manejo de errores simples."""
+def smm_post(payload: dict):
+    """Helper: llama a la API de Peakerr y devuelve (data, error)."""
     if not API_KEY:
-        raise RuntimeError("Falta la variable de entorno PEAKERR_API_KEY.")
+        return None, "Falta PEAKERR_API_KEY en variables de entorno."
     data = {"key": API_KEY}
     data.update(payload)
-    r = requests.post(API_URL, data=data, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-def get_services():
-    """Lista de servicios o [] si falla."""
     try:
-        return api_post({"action": "services"})
-    except Exception:
-        return []
+        r = requests.post(API_URL, data=data, timeout=25)
+        r.raise_for_status()
+        return r.json(), None
+    except Exception as e:
+        return None, f"Error llamando a la API: {e}"
 
-def get_service_limits(service_id: str):
-    """Devuelve (min, max) del servicio o (None, None) si no se encuentran."""
-    for s in get_services():
-        sid = str(s.get("service") or s.get("id"))
-        if sid == str(service_id):
-            mn = int(s.get("min", 1))
-            mx = int(s.get("max", 1000000))
-            return mn, mx
-    return None, None
+# ---------- Rutas públicas
 
-# ------------------ Rutas ------------------
 @app.route("/", methods=["GET", "POST"])
 def index():
-    flash = ""
+    """Crear pedido."""
+    created_id = None
+    error = None
+
     if request.method == "POST":
-        sid = (request.form.get("service_id") or "").strip()
-        link = (request.form.get("link") or "").strip()
-        qty_raw = (request.form.get("quantity") or "").strip()
+        service_id = request.form.get("service_id", "").strip()
+        link = request.form.get("link", "").strip()
+        quantity = request.form.get("quantity", "").strip()
 
-        errors = []
-        if not sid.isdigit():
-            errors.append("Service ID debe ser numérico.")
-        if not looks_like_url(link):
-            errors.append("El link debe empezar por http(s)://")
-        try:
-            qty = int(qty_raw)
-            if qty <= 0:
-                raise ValueError
-        except Exception:
-            qty = 0
-            errors.append("Cantidad debe ser un entero positivo.")
-
-        if not API_KEY:
-            errors.append("Configura la variable PEAKERR_API_KEY en el servidor.")
-
-        # Valida min/max del servicio si es posible
-        if not errors:
-            mn, mx = get_service_limits(sid)
-            if mn is not None and (qty < mn or qty > mx):
-                errors.append(f"La cantidad para el servicio {sid} debe estar entre {mn} y {mx}.")
-
-        if errors:
-            flash = '<p class="err">' + "<br>".join("• " + e for e in errors) + "</p>"
+        if not service_id or not link or not quantity:
+            error = "Rellena todos los campos."
         else:
-            try:
-                data = api_post({
-                    "action": "add",
-                    "service": sid,
-                    "link": link,
-                    "quantity": qty
-                })
-                if "order" in data:
-                    flash = f'<p class="ok">Pedido creado. ID: <b>{data["order"]}</b></p>'
-                else:
-                    flash = f'<p class="err">Error al crear el pedido: <small class="mono">{data}</small></p>'
-            except Exception as e:
-                flash = f'<p class="err">Error de red: {e}</p>'
+            data, err = smm_post({
+                "action": "add",
+                "service": service_id,
+                "link": link,
+                "quantity": quantity
+            })
+            if err:
+                error = err
+            else:
+                created_id = data.get("order") or data.get("order_id")
+                if not created_id:
+                    error = f"Respuesta inesperada: {data}"
 
-    body = """
-    <form method="post" autocomplete="on">
-      <input name="service_id" placeholder="Service ID (p. ej., 27243)">
-      <input name="link" placeholder="https://instagram.com/usuario">
-      <input name="quantity" placeholder="Cantidad">
-      <button type="submit">Enviar</button>
-    </form>
-    """
-    return _page("Crear pedido", body, flash)
+    return render_template("pedido.html", created_id=created_id, error=error)
 
-@app.route("/services")
-def services():
-    items = get_services()
-    if not items:
-        return _page("Servicios", '<p class="err">No se pudieron obtener los servicios ahora.</p>')
-    rows = []
-    for s in items[:600]:  # limitar para no saturar la página
-        sid = s.get("service") or s.get("id")
-        name = s.get("name", "")
-        rate = s.get("rate") or s.get("price") or "?"
-        mn = s.get("min", "?")
-        mx = s.get("max", "?")
-        rows.append(f"<tr><td>{sid}</td><td>{name}</td><td>{rate}</td><td>{mn}</td><td>{mx}</td></tr>")
-    table = "<table><thead><tr><th>ID</th><th>Nombre</th><th>Precio/1k</th><th>Min</th><th>Max</th></tr></thead><tbody>" + "".join(rows) + "</tbody></table>"
-    return _page("Servicios", table)
+@app.route("/servicios")
+def servicios():
+    """Lista de servicios."""
+    items, error = None, None
+    data, err = smm_post({"action": "services"})
+    if err:
+        error = err
+    else:
+        items = data if isinstance(data, list) else None
+        if items is None:
+            error = f"Respuesta inesperada: {data}"
+    return render_template("servicios.html", items=items, error=error)
 
-@app.route("/status", methods=["GET"])
+@app.route("/estado")
 def status():
-    order_id = (request.args.get("order_id") or "").strip()
-    if not order_id:
-        form = """
-        <h3>Estado de pedido</h3>
-        <form method="get">
-          <input name="order_id" placeholder="ID del pedido">
-          <button type="submit">Consultar</button>
-        </form>
-        """
-        return _page("Estado", form)
-    try:
-        data = api_post({"action": "status", "order": order_id})
-        html = f"""
-        <h3>Pedido {order_id}</h3>
-        <p>Estado: <b>{data.get('status')}</b></p>
-        <p>Inicio: {data.get('start_count')}</p>
-        <p>Restantes: {data.get('remains')}</p>
-        <p>Charge: {data.get('charge')}</p>
-        """
-        return _page("Estado", html)
-    except Exception as e:
-        return _page("Estado", f'<p class="err">Error consultando estado: {e}</p>')
+    """Consultar estado por order_id (GET ?order_id=123)."""
+    order_id = request.args.get("order_id", "").strip()
+    data, error = None, None
 
-@app.route("/balance")
+    if order_id:
+        data, err = smm_post({"action": "status", "order": order_id})
+        if err:
+            error = err
+        elif not isinstance(data, dict):
+            error = f"Respuesta inesperada: {data}"
+
+    return render_template("estado.html", order_id=order_id, data=data, error=error)
+
+@app.route("/saldo")
 def balance():
-    try:
-        data = api_post({"action": "balance"})
-        bal = data.get("balance")
-        cur = data.get("currency", "")
-        return _page("Saldo", f"<p>Saldo: <b>{bal} {cur}</b></p>")
-    except Exception as e:
-        return _page("Saldo", f'<p class="err">Error consultando saldo: {e}</p>')
+    """Mostrar saldo de la API."""
+    data, error = smm_post({"action": "balance"})
+    if error:
+        return render_template("saldo.html", data=None, error=error)
+    return render_template("saldo.html", data=data, error=None)
 
-# ------------------ Admin protegido ------------------
-@app.route("/login", methods=["GET", "POST"])
-def admin_login():
-    err = ""
-    if request.method == "POST":
-        pwd = request.form.get("password", "")
-        if os.environ.get("ADMIN_PASSWORD") and pwd == os.environ.get("ADMIN_PASSWORD"):
-            session["is_admin"] = True
-            return redirect(url_for("admin"))
-        err = "Contraseña incorrecta."
-    form = f"""
-    {'<p class="err">'+err+'</p>' if err else ''}
-    <form method="post">
-      <input type="password" name="password" placeholder="Contraseña">
-      <button type="submit">Entrar</button>
-    </form>
-    """
-    return _page("Login Admin", form)
+# ---------- Admin (login muy simple)
 
-@app.route("/admin")
+@app.route("/admin", methods=["GET", "POST"])
 def admin():
-    if not session.get("is_admin"):
-        return redirect(url_for("admin_login"))
-    body = """
-    <p>Bienvenido al panel Admin.</p>
-    <ul>
-      <li>Próximamente: dashboard, últimos pedidos, etc.</li>
-    </ul>
-    <p><a href="/logout">Cerrar sesión</a></p>
-    """
-    return _page("Admin", body)
+    if session.get("auth"):
+        # Panel (placeholder)
+        return render_template("admin.html")
+
+    error = None
+    if request.method == "POST":
+        u = request.form.get("user", "")
+        p = request.form.get("password", "")
+        if u == ADMIN_USER and p == ADMIN_PASS:
+            session["auth"] = True
+            return redirect(url_for("admin"))
+        error = "Usuario o contraseña incorrectos."
+    return render_template("admin_login.html", error=error)
 
 @app.route("/logout")
 def logout():
-    session.pop("is_admin", None)
+    session.clear()
     return redirect(url_for("index"))
 
-# ------------------ Main (local) ------------------
-if __name__ == "__main__":
-    # Para pruebas locales únicamente
-    app.run(host="0.0.0.0", port=10000, debug=True)
+# ---------- Healthcheck opcional
+@app.route("/healthz")
+def healthz():
+    return "ok", 200
