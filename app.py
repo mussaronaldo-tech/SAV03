@@ -80,3 +80,39 @@ def services():
         return _page("<h2>Servicios (primeros 100)</h2><ul>"+items+"</ul>")
     except Exception as e:
         return _page(f"<p style='color:red'>Error: {e}</p>")
+        # --- Estado de pedido y balance (añadir a app.py) ---
+import os, requests
+from flask import request
+
+API_URL = "https://peakerr.com/api/v2"
+API_KEY = os.environ.get("PEAKERR_API_KEY", "")
+
+@app.route("/status")
+def status():
+    order_id = request.args.get("order_id") or request.args.get("id") or ""
+    if not order_id:
+        return """
+        <h3>Estado de pedido</h3>
+        <form method="get">
+            <input name="order_id" placeholder="ID de pedido">
+            <button type="submit">Consultar</button>
+        </form>
+        """
+    try:
+        r = requests.post(API_URL, data={"key": API_KEY, "action": "status", "order": order_id}, timeout=20)
+        data = r.json()
+    except Exception as e:
+        return f"Error consultando estado: {e}<br><pre>{r.text if 'r' in locals() else ''}</pre>"
+    return f"""
+        <h3>Pedido #{order_id}</h3>
+        <p>Estado: <b>{data.get('status')}</b></p>
+        <p>Inicio: {data.get('start_count')}</p>
+        <p>Restantes: {data.get('remains')}</p>
+        <p>Charge: {data.get('charge')}</p>
+    """
+
+@app.route("/balance")
+def balance():
+    r = requests.post(API_URL, data={"key": API_KEY, "action": "balance"}, timeout=20)
+    data = r.json()
+    return f"Saldo: <b>{data.get('balance')}</b> {data.get('currency')}"
