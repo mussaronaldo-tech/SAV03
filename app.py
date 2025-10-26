@@ -1,45 +1,50 @@
 import os
+import logging
+import traceback
 import requests
-from flask import Flask, render_template, request, redirect, url_for, session, flash
+from flask import (
+    Flask, render_template, request, redirect, url_for, session
+)
 
-# --- Configuración básica
+# -------------------- Config básica
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "cambia-esta-clave")
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
-API_URL = "https://peakerr.com/api/v2"
-API_KEY = os.environ.get("PEAKERR_API_KEY", "")
-
+API_URL  = "https://peakerr.com/api/v2"
+API_KEY  = os.environ.get("PEAKERR_API_KEY", "")  # <- variable de entorno
 ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin123!X")
+
+# Log a stdout (para ver errores en Koyeb)
+logging.basicConfig(level=logging.INFO)
 
 def smm_post(payload: dict):
-    """Helper: llama a la API de Peakerr y devuelve (data, error)."""
+    """Llama a la API de Peakerr y devuelve (data, error)."""
     if not API_KEY:
-        return None, "Falta PEAKERR_API_KEY en variables de entorno."
-    data = {"key": API_KEY}
-    data.update(payload)
+        return None, "Falta PEA KERR_API_KEY en variables de entorno."
     try:
-        r = requests.post(API_URL, data=data, timeout=25)
+        data = {"key": API_KEY}
+        data.update(payload)
+        r = requests.post(API_URL, data=data, timeout=20)
         r.raise_for_status()
         return r.json(), None
     except Exception as e:
+        logging.error("Error llamando a API: %s", e)
+        logging.error(traceback.format_exc())
         return None, f"Error llamando a la API: {e}"
 
-# ---------- Rutas públicas
-
+# -------------------- Rutas públicas
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Crear pedido."""
+    """Formulario principal: crear pedido (mismo contenido que pedido.html)."""
     created_id = None
     error = None
-
     if request.method == "POST":
-        service_id = request.form.get("service_id", "").strip()
-        link = request.form.get("link", "").strip()
-        quantity = request.form.get("quantity", "").strip()
-
-        if not service_id or not link or not quantity:
-            error = "Rellena todos los campos."
+        service_id = (request.form.get("service_id") or "").strip()
+        link      = (request.form.get("link") or "").strip()
+        quantity  = (request.form.get("quantity") or "").strip()
+        if not (service_id and link and quantity):
+            error = "Completa todos los campos."
         else:
             data, err = smm_post({
                 "action": "add",
@@ -50,77 +55,69 @@ def index():
             if err:
                 error = err
             else:
-                created_id = data.get("order") or data.get("order_id")
-                if not created_id:
-                    error = f"Respuesta inesperada: {data}"
+                created_id = data.get("order") or data.get("order_id") or data.get("data") or "?"
+    return render_template("index.html", created_id=created_id, error=error)
 
-    return render_template("pedido.html", created_id=created_id, error=error)
+@app.route("/pedido", methods=["GET", "POST"])
+def pedido():
+    # Misma lógica que index, por si usas /pedido en el menú
+    return index()
 
+@app.route("/services")
 @app.route("/servicios")
-def servicios():
-    """Lista de servicios."""
-    items, error = None, None
+def services():
     data, err = smm_post({"action": "services"})
-    if err:
-        error = err
-    else:
-        items = data if isinstance(data, list) else None
-        if items is None:
-            error = f"Respuesta inesperada: {data}"
-    return render_template("servicios.html", items=items, error=error)
+    services_list = data if isinstance(data, list) else []
+    return render_template("services.html", services=services_list, error=err)
 
-@app.route("/estado")
+@app.route("/status", methods=["GET"])
 def status():
-    """Consultar estado por order_id (GET ?order_id=123)."""
-    order_id = request.args.get("order_id", "").strip()
-    data, error = None, None
+    order_id = (request.args.get("order_id") or "").strip()
+    if not order_id:
+        return render_template("status.html", data=None, error=None)
+    data, err = smm_post({"action": "status", "order": order_id})
+    return render_template("status.html", data=data or {}, error=err)
 
-    if order_id:
-        data, err = smm_post({"action": "status", "order": order_id})
-        if err:
-            error = err
-        elif not isinstance(data, dict):
-            error = f"Respuesta inesperada: {data}"
-
-    return render_template("estado.html", order_id=order_id, data=data, error=error)
-
-@app.route("/saldo")
+@app.route("/balance")
 def balance():
-    """Mostrar saldo de la API."""
-    data, error = smm_post({"action": "balance"})
-    if error:
-        return render_template("saldo.html", data=None, error=error)
-    return render_template("saldo.html", data=data, error=None)
+    data, err = smm_post({"action": "balance"})
+    bal = None if not isinstance(data, dict) else data.get("balance")
+    return render_template("balance.html", balance=bal, error=err)
 
-# ---------- Admin (login muy simple)
-
-@app.route("/admin", methods=["GET", "POST"])
-def admin():
-    if session.get("auth"):
-        # Panel (placeholder)
-        return render_template("admin.html")
-
+# -------------------- Admin (muy simple)
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
     error = None
     if request.method == "POST":
-        u = request.form.get("user", "")
+        u = request.form.get("username", "")
         p = request.form.get("password", "")
         if u == ADMIN_USER and p == ADMIN_PASS:
-            session["auth"] = True
-            return redirect(url_for("admin"))
-        error = "Usuario o contraseña incorrectos."
+            session["admin"] = True
+            return redirect(url_for("admin_panel"))
+        error = "Credenciales incorrectas."
     return render_template("admin_login.html", error=error)
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect(url_for("index"))
+@app.route("/admin/logout")
+def admin_logout():
+    session.pop("admin", None)
+    return redirect(url_for("admin_login"))
 
-# ---------- Healthcheck opcional
-@app.route("/healthz")
-def healthz():
-    return "ok", 200
+@app.route("/admin")
+def admin_panel():
+    if not session.get("admin"):
+        return redirect(url_for("admin_login"))
+    return render_template("admin.html")
 
-# -------------------- Entrada local --------------------
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+# -------------------- Salud y errores
+@app.route("/health")
+def health():
+    return {"ok": True}, 200
+
+@app.errorhandler(500)
+def handle_500(e):
+    logging.error("Error 500: %s", e)
+    logging.error(traceback.format_exc())
+    return render_template("index.html", created_id=None,
+                           error="Ocurrió un error inesperado."), 500
+
+# Nota: en Koyeb no necesitamos app.run(); Gunicorn lo arranca con Procfile.
