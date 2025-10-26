@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Acceso Admin{% endblock %}
+{% block content %}
+<h1>Acceso Admin</h1>
+{% if error %}<div class="alert">{{ error }}</div>{% endif %}
+<form class="card" method="post">
+  <label>Usuario</label>
+  <input name="user" autocomplete="username" placeholder="admin">
+  <label>Contraseña</label>
+  <input name="password" type="password" autocomplete="current-password" placeholder="••••••••">
+  <button type="submit">Entrar</button>
+</form>
+{% endblock %}
