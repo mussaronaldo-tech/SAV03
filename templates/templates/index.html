@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Crear pedido</h1>
+<form method="post" action="{{ url_for('index') }}" class="card">
+  <input type="text"   name="service"  placeholder="Service ID (p. ej., 27243)" required>
+  <input type="url"    name="link"     placeholder="https://instagram.com/usuario" required>
+  <input type="number" name="quantity" placeholder="Cantidad" min="1" required>
+  <button type="submit">Enviar</button>
+</form>
+
+{% if order_id %}
+  <p class="ok">Pedido creado. ID: <b>{{ order_id }}</b></p>
+{% endif %}
+{% endblock %}
