@@ -165,7 +165,27 @@ def saldo():
 def healthz():
     return "OK", 200
 
+# --- Rutas de diagnóstico (pegar al final de app.py) -------------------------
 
+# Vida del proceso (para health checks):
+@app.route("/healthz")
+def healthz():
+    return "OK", 200
+
+# Texto plano sin plantillas:
+@app.route("/__plain")
+def __plain():
+    return "App corriendo (sin plantillas)", 200
+
+# Listado de rutas registradas en Flask:
+@app.route("/__routes")
+def __routes():
+    lines = []
+    for rule in app.url_map.iter_rules():
+        methods = ",".join(sorted(m for m in rule.methods if m in {"GET","POST"}))
+        lines.append(f"{rule.rule}  ->  endpoint: {rule.endpoint}  ({methods})")
+    return "<pre>" + "\n".join(sorted(lines)) + "</pre>"
+    
 # ---------- Local (no usado en Koyeb) ----------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=True)
