@@ -9,6 +9,3 @@ def index():
 @app.route("/admin")
 def admin():
     return "<h2>Panel Admin de SAV03</h2><p>Funcionalidad próximamente.</p>"
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=10000)
