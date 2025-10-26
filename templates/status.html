@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block content %}
+<h1>Estado de pedido</h1>
+<form method="get" class="card">
+  <input name="order_id" placeholder="ID de pedido" required>
+  <button type="submit">Consultar</button>
+</form>
+
+{% if data %}
+<div class="card">
+  <p><b>Estado:</b> {{ data.status }}</p>
+  <p><b>Inicio:</b> {{ data.start_count }}</p>
+  <p><b>Restantes:</b> {{ data.remains }}</p>
+  <p><b>Charge:</b> {{ data.charge }}</p>
+</div>
+{% endif %}
+{% endblock %}
