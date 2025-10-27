@@ -1,191 +1,188 @@
 import os
 import requests
 from flask import (
-    Flask, render_template, request, redirect, url_for, session, flash
+    Flask, render_template, request,
+    redirect, url_for, session, flash
 )
 
-# ---------- Configuración ----------
-app = Flask(__name__, template_folder="templates", static_folder="static")
-app.secret_key = os.environ.get("SECRET_KEY", "cambia-esta-clave-super-segura")
+# =========================
+# Configuración de la app
+# =========================
+app = Flask(__name__)
 
+# Clave de sesión (usa FLASK_SECRET o SECRET_KEY)
+app.secret_key = (
+    os.environ.get("FLASK_SECRET")
+    or os.environ.get("SECRET_KEY")
+    or "change-me"
+)
+
+# PeakerR API
 API_URL = "https://peakerr.com/api/v2"
-API_KEY = os.environ.get("PEAKERR_API_KEY", "").strip()
+API_KEY = os.environ.get("PEAKERR_API_KEY", "")
 
-ADMIN_USER = os.environ.get("ADMIN_USER", "admin").strip()
-ADMIN_PASS = os.environ.get("ADMIN_PASS", "admin12345").strip()
+# Credenciales de admin (puedes fijarlas por variables de entorno)
+ADMIN_USER = os.environ.get("ADMIN_USER", "admin")
+ADMIN_PASS = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 
-# ---------- Helper API ----------
+# =========================
+# Helpers
+# =========================
 def smm_post(payload: dict):
-    """Llama a la API de Peakerr y devuelve (data, error)."""
+    """Llama a la API de PeakerR y devuelve (ok, data|mensaje_error)."""
     if not API_KEY:
-        return None, "Falta PEAKERR_API_KEY en variables de entorno."
-
+        return False, "Falta la variable de entorno PEAKERR_API_KEY."
     data = {"key": API_KEY}
     data.update(payload)
-
     try:
-        r = requests.post(API_URL, data=data, timeout=25)
+        r = requests.post(API_URL, data=data, timeout=20)
         r.raise_for_status()
-        # La API suele devolver JSON
-        return r.json(), None
+        # A veces la API devuelve texto simple; intentamos json con fallback
+        try:
+            return True, r.json()
+        except Exception:
+            return True, {"raw": r.text}
     except Exception as e:
-        return None, f"Error llamando a la API: {e}"
+        return False, f"Error llamando a la API: {e}"
 
 
-# ---------- Rutas públicas ----------
+def require_admin():
+    if not session.get("is_admin"):
+        return redirect(url_for("admin_login"))
+    return None
+
+
+# =========================
+# Rutas públicas
+# =========================
 @app.route("/", methods=["GET", "POST"])
 def index():
-    """Home: crear pedido usando index.html"""
+    """Crear pedido."""
     created_id = None
     error = None
 
     if request.method == "POST":
-        # Admitimos ambos nombres por si el formulario usa uno u otro
-        service_id = (request.form.get("service_id") or request.form.get("service") or "").strip()
-        link       = (request.form.get("link") or "").strip()
-        quantity   = (request.form.get("quantity") or "").strip()
+        service_id = (request.form.get("service_id") or "").strip()
+        link = (request.form.get("link") or "").strip()
+        quantity = (request.form.get("quantity") or "").strip()
 
         if not service_id or not link or not quantity:
-            error = "Por favor completa todos los campos."
+            error = "Completa todos los campos."
         else:
-            payload = {"action": "add", "service": service_id, "link": link, "quantity": quantity}
-            data, err = smm_post(payload)
-            if err:
-                error = err
+            ok, data = smm_post({
+                "action": "add",
+                "service": service_id,
+                "link": link,
+                "quantity": quantity,
+            })
+            if ok:
+                created_id = (data.get("order")
+                              or data.get("order_id")
+                              or data.get("raw")
+                              or "?")
             else:
-                created_id = data.get("order") or data.get("order_id")
-                if not created_id:
-                    error = f"Respuesta inesperada de la API: {data}"
+                error = data
 
     return render_template("index.html", created_id=created_id, error=error)
 
 
-@app.route("/services")
+@app.get("/services")
 def services():
-    """Listado de servicios -> services.html"""
-    services_list = []
-    error = None
-
-    data, err = smm_post({"action": "services"})
-    if err:
-        error = err
+    """Lista de servicios desde la API."""
+    q = (request.args.get("q") or "").strip().lower()
+    ok, data = smm_post({"action": "services"})
+    items = []
+    if ok and isinstance(data, list):
+        items = data
+    elif ok and isinstance(data, dict) and "raw" in data:
+        # Algunas APIs devuelven string; no lo parseamos aquí
+        flash("La API devolvió un formato no estándar.", "warning")
     else:
-        if isinstance(data, list):
-            services_list = data
-        elif isinstance(data, dict):
-            # Por si alguna vez viene envuelto
-            services_list = data.get("services") or data.get("data") or []
+        flash(str(data), "danger")
 
-    return render_template("services.html", services=services_list, error=error)
+    # Filtro rápido por nombre si el template lo usa
+    if q:
+        def _match(s):
+            name = str(s.get("name", "")).lower()
+            return q in name
+        items = [s for s in items if _match(s)]
+
+    return render_template("services.html", services=items, q=q)
 
 
-@app.route("/status")
-def status():
-    """Estado de pedido -> status.html (usa ?order_id=XXXX)"""
+@app.get("/status")
+def status_view():
+    """Consulta de estado por order_id."""
     order_id = (request.args.get("order_id") or "").strip()
     result = None
     error = None
 
     if order_id:
-        data, err = smm_post({"action": "status", "order": order_id})
-        if err:
-            error = err
-        else:
+        ok, data = smm_post({"action": "status", "order": order_id})
+        if ok:
             result = data
+        else:
+            error = data
 
-    # Pasamos 'result' y también 'data' por compatibilidad con plantillas antiguas
-    return render_template("status.html", order_id=order_id, result=result, data=result, error=error)
-
-
-@app.route("/balance")
-def balance():
-    """Balance -> balance.html"""
-    balance_value, currency, error = None, None, None
-    data, err = smm_post({"action": "balance"})
-    if err:
-        error = err
-    else:
-        if isinstance(data, dict):
-            balance_value = data.get("balance")
-            currency = data.get("currency")
-
-    # Pasamos 'balance' y 'currency' y también 'data' por compatibilidad
-    return render_template("balance.html", balance=balance_value, currency=currency, data=data if not err else None, error=error)
+    return render_template("status.html", result=result, error=error, order_id=order_id)
 
 
-# ---------- Admin (login + panel) ----------
-# Importante: endpoint="admin" para que url_for('admin') en tus plantillas funcione
-@app.route("/admin", methods=["GET", "POST"], endpoint="admin")
+@app.get("/balance")
+def balance_view():
+    """Muestra balance de la cuenta en PeakerR."""
+    ok, data = smm_post({"action": "balance"})
+    if ok:
+        balance = data.get("balance")
+        currency = data.get("currency", "")
+        return render_template("balance.html", balance=balance, currency=currency)
+    flash(str(data), "danger")
+    return render_template("balance.html", balance=None, currency=None)
+
+
+# =========================
+# Admin
+# =========================
+@app.route("/admin/login", methods=["GET", "POST"])
 def admin_login():
     error = None
     if request.method == "POST":
-        user = (request.form.get("username") or request.form.get("user") or "").strip()
-        pwd  = (request.form.get("password") or "").strip()
-        if user == ADMIN_USER and pwd == ADMIN_PASS:
-            session["admin"] = True
-            session["admin_name"] = user
-            return redirect(url_for("admin_panel"))
+        u = (request.form.get("username") or "").strip()
+        p = (request.form.get("password") or "").strip()
+        if u == ADMIN_USER and p == ADMIN_PASS:
+            session["is_admin"] = True
+            return redirect(url_for("admin"))  # endpoint admin definido abajo
         error = "Usuario o contraseña incorrectos."
     return render_template("admin_login.html", error=error)
 
-@app.route("/admin/panel", endpoint="admin_panel")
+
+@app.get("/admin/logout")
+def admin_logout():
+    session.clear()
+    return redirect(url_for("admin_login"))
+
+
+# Forzamos el endpoint a llamarse 'admin' para que url_for('admin') funcione en las plantillas
+@app.route("/admin", endpoint="admin")
 def admin_panel():
-    if not session.get("admin"):
-        return redirect(url_for("admin"))
+    maybe_redirect = require_admin()
+    if maybe_redirect:
+        return maybe_redirect
+    # Aquí en el futuro puedes pasar datos (últimos pedidos, métricas, etc.)
     return render_template("admin.html")
 
-@app.route("/logout")
-def logout():
-    session.pop("admin", None)
-    return redirect(url_for("admin"))
+
+# =========================
+# Healthcheck (¡una sola vez!)
+# =========================
+@app.get("/healthz")
+def healthcheck():
+    return "ok", 200
 
 
-# ---------- Aliases en español (por si tus menús enlazan así) ----------
-@app.route("/pedido", methods=["GET", "POST"])
-def pedido():
-    # reutiliza la misma lógica/plantilla del index
-    return index()
-
-@app.route("/servicios")
-def servicios():
-    return redirect(url_for("services"))
-
-@app.route("/estado")
-def estado():
-    return redirect(url_for("status"))
-
-@app.route("/saldo")
-def saldo():
-    return redirect(url_for("balance"))
-
-
-# ---------- Healthcheck ----------
-@app.route("/healthz")
-def healthz():
-    return "OK", 200
-
-# --- Rutas de diagnóstico (pegar al final de app.py) -------------------------
-
-# Vida del proceso (para health checks):
-@app.route("/healthz")
-def healthz():
-    return "OK", 200
-
-# Texto plano sin plantillas:
-@app.route("/__plain")
-def __plain():
-    return "App corriendo (sin plantillas)", 200
-
-# Listado de rutas registradas en Flask:
-@app.route("/__routes")
-def __routes():
-    lines = []
-    for rule in app.url_map.iter_rules():
-        methods = ",".join(sorted(m for m in rule.methods if m in {"GET","POST"}))
-        lines.append(f"{rule.rule}  ->  endpoint: {rule.endpoint}  ({methods})")
-    return "<pre>" + "\n".join(sorted(lines)) + "</pre>"
-    
-# ---------- Local (no usado en Koyeb) ----------
+# =========================
+# Arranque local (opcional)
+# =========================
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), debug=True)
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port, debug=False)
